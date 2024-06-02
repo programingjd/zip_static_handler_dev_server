@@ -4,7 +4,7 @@ use crate::http::headers::{
 use crate::http::method;
 use crate::http::request::Request;
 use crate::http::response::StatusCode;
-use crate::path::{extension, file_path, filename};
+use crate::path::{extension, filename};
 use colored::{ColoredString, Colorize};
 use crc32fast::hash;
 use tokio::fs::File;
@@ -41,21 +41,27 @@ impl<T: HeaderSelector> Handler<T> {
                 );
             }
         };
-        if let Some(path_without_trailing_slash) = path.strip_suffix('/') {
-            if !path_without_trailing_slash.is_empty() {
+        let path = path.strip_prefix('/').unwrap_or(&path);
+        if let Some(path) = path.strip_prefix(self.prefix) {
+            let path = path.strip_prefix('/').unwrap_or(path);
+            if let Some(path_without_trailing_slash) = path.strip_suffix('/') {
                 if let Some(HeadersAndCompression { mut headers, .. }) = self
                     .header_selector
                     .headers_for_extension(path_without_trailing_slash, "308")
                 {
-                    let location = format!("{}{path_without_trailing_slash}", self.prefix);
+                    let location = format!("/{}{path_without_trailing_slash}", self.prefix);
                     headers.push(Line::with_owned_value(LOCATION, location.into_bytes()));
                     println!("{} {} {}", "308".blue(), method_string(method), path);
                     return request.response(StatusCode::PermanentRedirect, headers.iter(), None);
+                } else {
+                    println!("{} {} {}", "404".red(), method_string(method), path);
+                    return request.response(
+                        StatusCode::NotFound,
+                        self.header_selector.error_headers().iter(),
+                        None::<&[u8]>,
+                    );
                 }
             }
-        }
-        if let Some(path) = path.strip_prefix(self.prefix) {
-            let path = file_path(path);
             if path.starts_with('.') || path.contains("/.") {
                 println!("{} {} /{}", "404".red(), method_string(method), path);
                 return request.response(
@@ -64,15 +70,15 @@ impl<T: HeaderSelector> Handler<T> {
                     None::<&[u8]>,
                 );
             }
-            let index_file = format!("{}.html", &path);
-            let temporary_redirect_file = format!("{}.307", &path);
-            let permanent_redirect_file = format!("{}.308", &path);
-            let candidates = vec![
-                path,
-                index_file,
-                temporary_redirect_file,
-                permanent_redirect_file,
-            ];
+            let mut candidates: Vec<String> = vec![];
+            if path.is_empty() {
+                candidates.push("index.html".to_string());
+            } else {
+                candidates.push(path.to_string());
+                candidates.push(format!("{}.html", &path));
+            };
+            candidates.push(format!("{}.307", &path));
+            candidates.push(format!("{}.308", &path));
             for path in candidates {
                 let filename = filename(&path);
                 let extension = extension(filename);

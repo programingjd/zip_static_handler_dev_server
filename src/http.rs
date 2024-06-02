@@ -45,10 +45,6 @@ pub mod headers {
     pub const X_FRAME_OPTIONS: &[u8] = b"x-frame-options";
     pub const X_XSS_PROTECTION: &[u8] = b"x-xss-protection";
 
-    pub trait Headers {
-        fn append(&mut self, key: &[u8], value: &[u8]) -> &mut Self;
-    }
-
     #[derive(Debug)]
     pub struct Line {
         pub key: &'static [u8],

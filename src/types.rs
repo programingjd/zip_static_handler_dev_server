@@ -15,7 +15,22 @@ lazy_static! {
             (CORP, b"same-site".as_slice()).into(),
             (COEP, b"crendentialless".as_slice()).into(),
             (COOP, b"same-origin".as_slice()).into(),
-            (CSP, b"default-src 'self';script-src 'wasm-unsafe-eval';script-src-elem 'self' 'unsafe-inline';script-src-attr 'none';worker-src 'self' blob:;style-src 'self' 'unsafe-inline';img-src 'self' data: blob:;font-src 'self' data:;frame-src 'none';object-src 'none';base-uri 'none';frame-ancestors 'none';form-action 'none'".as_slice()).into(),
+            (CSP,
+                b"\
+                    default-src 'self';\
+                    script-src 'wasm-unsafe-eval';\
+                    script-src-elem 'self' 'unsafe-inline';\
+                    script-src-attr 'none';\
+                    worker-src 'self' blob:;\
+                    style-src 'self' 'unsafe-inline';\
+                    img-src 'self' data: blob:;\
+                    font-src 'self' data:;\
+                    frame-src 'none';\
+                    object-src 'none';\
+                    base-uri 'none';\
+                    frame-ancestors 'none';\
+                    form-action 'none'\
+                ".as_slice()).into(),
             (HSTS, b"max-age=63072000; includeSubDomains; preload".as_slice()).into(),
         ];
         headers
@@ -33,6 +48,8 @@ lazy_static! {
 const CACHE_CONTROL_NO_CACHE: &[u8] =
     b"public,no-cache,max-age=0,must-revalidate;stale-if-error=3600";
 const CACHE_CONTROL_REVALIDATE: &[u8] = b"public,max-age=3600,must-revalidate,stale-if-error=3600";
+const CACHE_CONTROL_DEFAULT: &[u8] =
+    b"public,max-age=72000,stale-while-revalidate=28800,stale-if-error=3600";
 const CACHE_CONTROL_IMMUTABLE: &[u8] =
     b"public,max-age=86400,immutable,stale-while-revalidate=864000,stale-if-error=3600";
 
@@ -75,9 +92,57 @@ pub(crate) fn headers_for_type(filename: &str, extension: &str) -> Option<Header
                 )
             },
         ),
-        "json" => Some(headers_and_compression(
-            Some(b"application/json"),
-            Some(CACHE_CONTROL_REVALIDATE),
+        "json" => Some(
+            if filename.starts_with("manifest.") || filename.ends_with(".manifest") {
+                headers_and_compression(
+                    Some(b"application/manifest+json"),
+                    Some(CACHE_CONTROL_DEFAULT),
+                    true,
+                )
+            } else if filename.ends_with(".ld") {
+                headers_and_compression(
+                    Some(b"application/ld+json"),
+                    Some(CACHE_CONTROL_DEFAULT),
+                    true,
+                )
+            } else if filename.ends_with(".schema") {
+                headers_and_compression(
+                    Some(b"application/schema+json"),
+                    Some(CACHE_CONTROL_DEFAULT),
+                    true,
+                )
+            } else {
+                headers_and_compression(
+                    Some(b"application/json"),
+                    Some(CACHE_CONTROL_REVALIDATE),
+                    true,
+                )
+            },
+        ),
+        "xml" => Some(
+            if filename.starts_with("atom.") || filename.ends_with(".atom") {
+                headers_and_compression(
+                    Some(b"application/atom+xml"),
+                    Some(CACHE_CONTROL_DEFAULT),
+                    true,
+                )
+            } else if filename.ends_with(".dtd") {
+                headers_and_compression(
+                    Some(b"application/xnl-dtd"),
+                    Some(CACHE_CONTROL_DEFAULT),
+                    true,
+                )
+            } else {
+                headers_and_compression(
+                    Some(b"application/xml"),
+                    Some(CACHE_CONTROL_REVALIDATE),
+                    true,
+                )
+            },
+        ),
+        "ldjson" => Some(headers_and_compression(
+            Some(b"application/ld+json"),
+            Some(CACHE_CONTROL_DEFAULT),
             true,
         )),
         "txt" => Some(headers_and_compression(
@@ -145,8 +210,28 @@ pub(crate) fn headers_for_type(filename: &str, extension: &str) -> Option<Header
             Some(CACHE_CONTROL_IMMUTABLE),
             false,
         )),
+        "jpeg" => Some(headers_and_compression(
+            Some(b"image/jpeg"),
+            Some(CACHE_CONTROL_IMMUTABLE),
+            false,
+        )),
+        "aac" => Some(headers_and_compression(
+            Some(b"audio/aac"),
+            Some(CACHE_CONTROL_REVALIDATE),
+            false,
+        )),
         "mp3" => Some(headers_and_compression(
             Some(b"audio/mp3"),
+            Some(CACHE_CONTROL_REVALIDATE),
+            false,
+        )),
+        "flac" => Some(headers_and_compression(
+            Some(b"audio/flac"),
+            Some(CACHE_CONTROL_REVALIDATE),
+            false,
+        )),
+        "webm" => Some(headers_and_compression(
+            Some(b"audio/webm"),
             Some(CACHE_CONTROL_REVALIDATE),
             false,
         )),
@@ -165,10 +250,35 @@ pub(crate) fn headers_for_type(filename: &str, extension: &str) -> Option<Header
             Some(CACHE_CONTROL_REVALIDATE),
             true,
         )),
+        "gpx" => Some(headers_and_compression(
+            Some(b"application/gpx+xml"),
+            Some(CACHE_CONTROL_DEFAULT),
+            true,
+        )),
+        "kml" => Some(headers_and_compression(
+            Some(b"application/vnd.google-earth.kml+xml"),
+            Some(CACHE_CONTROL_DEFAULT),
+            true,
+        )),
+        "geojson" => Some(headers_and_compression(
+            Some(b"application/geo+json"),
+            Some(CACHE_CONTROL_DEFAULT),
+            true,
+        )),
+        "glb" => Some(headers_and_compression(
+            Some(b"model/gltf-binary"),
+            Some(CACHE_CONTROL_DEFAULT),
+            true,
+        )),
         "zip" => Some(headers_and_compression(
             Some(b"application/zip"),
             Some(CACHE_CONTROL_REVALIDATE),
             false,
+        )),
+        "bin" => Some(headers_and_compression(
+            Some(b"application/octet-stream"),
+            Some(CACHE_CONTROL_REVALIDATE),
+            true,
         )),
         "307" => Some(headers_and_compression(
             None,
