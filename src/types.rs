@@ -3,47 +3,45 @@ use crate::http::headers::{
     Line, ALLOW, CACHE_CONTROL, COEP, CONTENT_LENGTH, CONTENT_TYPE, COOP, CORP, CSP, HSTS,
     SERVICE_WORKER_ALLOWED, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS, X_XSS_PROTECTION,
 };
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    pub static ref DEFAULT_HEADERS: Vec<Line> = {
-        let headers/*: Vec<(&'static [u8], &'static [u8])>*/ = vec![
-            (ALLOW, b"GET, HEAD".as_slice()).into(),
-            (X_CONTENT_TYPE_OPTIONS, b"nosniff".as_slice()).into(),
-            (X_FRAME_OPTIONS, b"DENY".as_slice()).into(),
-            (X_XSS_PROTECTION, b"1; mode=block".as_slice()).into(),
-            (CORP, b"same-site".as_slice()).into(),
-            (COEP, b"crendentialless".as_slice()).into(),
-            (COOP, b"same-origin".as_slice()).into(),
-            (CSP,
-                b"\
-                    default-src 'self';\
-                    script-src 'wasm-unsafe-eval';\
-                    script-src-elem 'self' 'unsafe-inline';\
-                    script-src-attr 'none';\
-                    worker-src 'self' blob:;\
-                    style-src 'self' 'unsafe-inline';\
-                    img-src 'self' data: blob:;\
-                    font-src 'self' data:;\
-                    frame-src 'none';\
-                    object-src 'none';\
-                    base-uri 'none';\
-                    frame-ancestors 'none';\
-                    form-action 'none'\
-                ".as_slice()).into(),
-            (HSTS, b"max-age=63072000; includeSubDomains; preload".as_slice()).into(),
-        ];
-        headers
-    };
-    pub static ref ERROR_HEADERS: Vec<Line> = {
-        let headers/*: Vec<(&'static [u8], &'static [u8])>*/ = vec![
-            (ALLOW, b"GET, HEAD".as_slice()).into(),
-            (CONTENT_LENGTH, b"0".as_slice()).into(),
-            //(HSTS, b"max-age=63072000; includeSubDomains; preload".as_slice()),
-        ];
-        headers
-    };
-}
+pub static DEFAULT_HEADERS: LazyLock<Vec<Line>> = LazyLock::new(|| {
+    let headers/*: Vec<(&'static [u8], &'static [u8])>*/ = vec![
+        (ALLOW, b"GET, HEAD".as_slice()).into(),
+        (X_CONTENT_TYPE_OPTIONS, b"nosniff".as_slice()).into(),
+        (X_FRAME_OPTIONS, b"DENY".as_slice()).into(),
+        (X_XSS_PROTECTION, b"1; mode=block".as_slice()).into(),
+        (CORP, b"same-site".as_slice()).into(),
+        (COEP, b"crendentialless".as_slice()).into(),
+        (COOP, b"same-origin".as_slice()).into(),
+        (CSP,
+            b"\
+                default-src 'self';\
+                script-src 'wasm-unsafe-eval';\
+                script-src-elem 'self' 'unsafe-inline';\
+                script-src-attr 'none';\
+                worker-src 'self' blob:;\
+                style-src 'self' 'unsafe-inline';\
+                img-src 'self' data: blob:;\
+                font-src 'self' data:;\
+                frame-src 'none';\
+                object-src 'none';\
+                base-uri 'none';\
+                frame-ancestors 'none';\
+                form-action 'none'\
+            ".as_slice()).into(),
+        (HSTS, b"max-age=63072000; includeSubDomains; preload".as_slice()).into(),
+    ];
+    headers
+});
+pub static ERROR_HEADERS: LazyLock<Vec<Line>> = LazyLock::new(|| {
+    let headers/*: Vec<(&'static [u8], &'static [u8])>*/ = vec![
+        (ALLOW, b"GET, HEAD".as_slice()).into(),
+        (CONTENT_LENGTH, b"0".as_slice()).into(),
+        //(HSTS, b"max-age=63072000; includeSubDomains; preload".as_slice()),
+    ];
+    headers
+});
 
 const CACHE_CONTROL_NO_CACHE: &[u8] =
     b"public,no-cache,max-age=0,must-revalidate;stale-if-error=3600";
