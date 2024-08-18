@@ -77,16 +77,21 @@ impl<T: HeaderSelector> Handler<T> {
                 candidates.push(path.to_string());
                 candidates.push(format!("{}.html", &path));
             };
-            candidates.push(format!("{}.307", &path));
-            candidates.push(format!("{}.308", &path));
+            if path.is_empty() {
+                candidates.push("index.307".to_string());
+                candidates.push("index.308".to_string());
+            } else {
+                candidates.push(format!("{}.307", &path));
+                candidates.push(format!("{}.308", &path));
+            }
             for path in candidates {
                 let filename = filename(&path);
                 let extension = extension(filename);
                 if let Some(HeadersAndCompression {
-                    mut headers,
-                    compressible,
-                    redirection,
-                }) = self
+                                mut headers,
+                                compressible,
+                                redirection,
+                            }) = self
                     .header_selector
                     .headers_for_extension(filename, extension)
                 {
