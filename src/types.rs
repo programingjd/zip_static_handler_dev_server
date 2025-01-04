@@ -17,6 +17,7 @@ pub static DEFAULT_HEADERS: LazyLock<Vec<Line>> = LazyLock::new(|| {
         (CSP,
             b"\
                 default-src 'self';\
+                connect-src 'self' https: data: blob:;\
                 script-src 'wasm-unsafe-eval';\
                 script-src-elem 'self' 'unsafe-inline';\
                 script-src-attr 'none';\

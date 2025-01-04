@@ -88,10 +88,10 @@ impl<T: HeaderSelector> Handler<T> {
                 let filename = filename(&path);
                 let extension = extension(filename);
                 if let Some(HeadersAndCompression {
-                                mut headers,
-                                compressible,
-                                redirection,
-                            }) = self
+                    mut headers,
+                    compressible,
+                    redirection,
+                }) = self
                     .header_selector
                     .headers_for_extension(filename, extension)
                 {
