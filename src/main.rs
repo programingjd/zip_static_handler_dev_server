@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::spawn;
-use tokio_rustls::rustls::pki_types::PrivateKeyDer;
-use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::pki_types::PrivateKeyDer;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -61,7 +61,7 @@ async fn main() {
         .with_no_client_auth()
         .with_single_cert(
             vec![cert.cert.der().clone()],
-            PrivateKeyDer::Pkcs8(cert.key_pair.serialized_der().into()),
+            PrivateKeyDer::Pkcs8(cert.signing_key.serialized_der().into()),
         )
         .expect("Failed to create certificate.");
     server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
