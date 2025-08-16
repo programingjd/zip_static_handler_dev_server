@@ -20,7 +20,7 @@ features = ["std"]
 [dependencies.hyper]
 version = "1.6"
 default-features = false
-features = []
+features = ["http1", "http2"]
 
 [dependencies.hyper-util]
 version = "0.1"
@@ -31,6 +31,11 @@ features = ["tokio", "server", "http1", "http2"]
 version = "0.1"
 default-features = false
 features = []
+
+[dependencies.hyper-rustls]
+version = "0.27"
+default-features = false
+features = ["ring", "http1", "http2"]
 
 [dependencies.rcgen]
 version = "0.14"

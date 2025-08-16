@@ -13,17 +13,27 @@ use ::hyper::service::service_fn;
 use clap::Parser;
 use colored::Colorize;
 use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Incoming;
+use hyper::{Request, Response, StatusCode, Uri};
+use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use rcgen::generate_simple_self_signed;
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::spawn;
-use tokio_rustls::TlsAcceptor;
-use tokio_rustls::rustls::ServerConfig;
-use tokio_rustls::rustls::pki_types::PrivateKeyDer;
+use tokio_rustls::rustls::client::danger::{
+    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
+};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use tokio_rustls::rustls::{DigitallySignedStruct, Error, ServerConfig, SignatureScheme};
+use tokio_rustls::{TlsAcceptor, rustls};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -34,8 +44,14 @@ about = "HTTP server that serves the static content in the current directory.",
 long_about = None
 )]
 struct Args {
-    #[arg(short, long)]
+    #[arg(long)]
     prefix: Option<PathBuf>,
+    #[arg(long)]
+    // #[arg(default_value = "8443")]
+    port: Option<u16>,
+    #[arg(long)]
+    // #[arg(default_value = "https://localhost")]
+    forwarded_origin: Option<String>,
 }
 #[tokio::main]
 async fn main() {
@@ -66,33 +82,197 @@ async fn main() {
         .expect("Failed to create certificate.");
     server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 443u16))
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, args.port.unwrap_or(443u16)))
         .await
         .expect("Failed to bind to port 443");
     println!(
         "{}",
-        format!("https://localhost/{prefix}")
-            .bright_red()
-            .underline()
+        format!(
+            "https://localhost{}/{prefix}",
+            match args.port {
+                Some(port) if port != 443 => format!(":{}", port),
+                _ => "".to_string(),
+            }
+        )
+        .bright_red()
+        .underline()
     );
+    let forwarded_uri = args
+        .forwarded_origin
+        .as_ref()
+        .map(|it| Arc::new(Uri::from_str(it).expect("invalid forwarded origin")));
+    let client = if args.forwarded_origin.is_some() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        #[derive(Debug)]
+        struct AcceptAllVerifier {
+            server_name: String,
+        }
+        impl ServerCertVerifier for AcceptAllVerifier {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &CertificateDer<'_>,
+                _intermediates: &[CertificateDer<'_>],
+                server_name: &ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: UnixTime,
+            ) -> Result<ServerCertVerified, Error> {
+                let server_name = server_name.to_str();
+                if server_name == "127.0.0.1"
+                    || server_name == "::1"
+                    || server_name == "localhost"
+                    || server_name == self.server_name
+                {
+                    return Ok(ServerCertVerified::assertion());
+                }
+                Err(Error::General(format!("{server_name} not forwarded")))
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &CertificateDer<'_>,
+                _dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &CertificateDer<'_>,
+                _dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+                vec![
+                    SignatureScheme::RSA_PKCS1_SHA256,
+                    SignatureScheme::ECDSA_NISTP256_SHA256,
+                    SignatureScheme::ED25519,
+                ]
+            }
+        }
+        let config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier {
+                server_name: forwarded_uri
+                    .as_ref()
+                    .unwrap()
+                    .host()
+                    .unwrap_or("localhost")
+                    .to_string(),
+            }))
+            .with_no_client_auth();
+        let client: Client<_, BoxBody<Bytes, hyper::Error>> = Client::builder(TokioExecutor::new())
+            .build(
+                HttpsConnector::<HttpConnector>::builder()
+                    .with_tls_config(config)
+                    .https_only()
+                    .enable_http1()
+                    .enable_http2()
+                    .build(),
+            );
+        Some(Arc::new(client))
+    } else {
+        None
+    };
     loop {
         if let Ok((tcp_stream, _remote_address)) = listener.accept().await {
             let tls_acceptor = tls_acceptor.clone();
+            let client = client.clone();
+            let forwarded_uri = forwarded_uri.clone();
             spawn(async move {
                 if let Ok(tls_stream) = tls_acceptor.accept(tcp_stream).await {
                     let io = TokioIo::new(tls_stream);
+                    let client = client.clone();
+                    let forwarded_uri = forwarded_uri.clone();
                     let _ = http2::Builder::new(TokioExecutor::new())
                         .serve_connection(
                             io,
-                            service_fn(move |request| async move {
-                                let header_selector = DefaultHeaderSelector;
-                                let handler = Handler {
-                                    prefix,
-                                    header_selector,
-                                };
-                                Ok::<hyper::Response<BoxBody<Bytes, hyper::Error>>, Infallible>(
-                                    handler.handle(RequestAdapter { inner: request }).await,
-                                )
+                            service_fn({
+                                let client = client.clone();
+                                let forwarded_uri = forwarded_uri.clone();
+                                move |request: Request<Incoming>| {
+                                    let client = client.clone();
+                                    let forwarded_uri = forwarded_uri.clone();
+                                    async move {
+                                        let header_selector = DefaultHeaderSelector;
+                                        let handler = Handler {
+                                            prefix,
+                                            header_selector,
+                                        };
+                                        let (parts, body) = request.into_parts();
+                                        let request =
+                                            Request::from_parts(parts.clone(), empty_body());
+                                        let response =
+                                            handler.handle(RequestAdapter { inner: request }).await;
+                                        Ok::<Response<BoxBody<Bytes, hyper::Error>>, Infallible>(
+                                            match response.status() {
+                                                StatusCode::NOT_FOUND
+                                                | StatusCode::METHOD_NOT_ALLOWED => {
+                                                    let body = body.boxed();
+                                                    if let Some(client) = client.as_ref() {
+                                                        let mut request = Request::from_parts(
+                                                            parts.clone(),
+                                                            body,
+                                                        );
+                                                        let uri = request.uri();
+                                                        let forward_uri = Uri::builder();
+                                                        let forwarded_uri = forwarded_uri.unwrap();
+                                                        let forward_uri = if let Some(scheme) =
+                                                            forwarded_uri
+                                                                .scheme()
+                                                                .or_else(|| uri.scheme())
+                                                        {
+                                                            forward_uri.scheme(scheme.clone())
+                                                        } else {
+                                                            forward_uri
+                                                        };
+                                                        let forward_uri = if let Some(authority) =
+                                                            forwarded_uri
+                                                                .authority()
+                                                                .or_else(|| uri.authority())
+                                                        {
+                                                            forward_uri.authority(authority.clone())
+                                                        } else {
+                                                            forward_uri
+                                                        };
+                                                        let forward_uri =
+                                                            if let Some(path_and_query) =
+                                                                uri.path_and_query()
+                                                            {
+                                                                forward_uri.path_and_query(
+                                                                    path_and_query.clone(),
+                                                                )
+                                                            } else {
+                                                                forward_uri
+                                                            };
+                                                        *request.uri_mut() =
+                                                            forward_uri.build().expect(
+                                                                "could not build forwarded uri",
+                                                            );
+                                                        let forward_response =
+                                                            client.request(request).await;
+                                                        if let Ok(forward_response) =
+                                                            forward_response
+                                                        {
+                                                            let (parts, body) =
+                                                                forward_response.into_parts();
+                                                            Response::from_parts(
+                                                                parts,
+                                                                body.boxed(),
+                                                            )
+                                                        } else {
+                                                            response
+                                                        }
+                                                    } else {
+                                                        let _ = body.collect().await;
+                                                        response
+                                                    }
+                                                }
+                                                _ => response,
+                                            },
+                                        )
+                                    }
+                                }
                             }),
                         )
                         .await;
@@ -100,4 +280,10 @@ async fn main() {
             });
         }
     }
+}
+
+fn empty_body() -> BoxBody<Bytes, hyper::Error> {
+    Empty::<Bytes>::new()
+        .map_err(|err: Infallible| match err {})
+        .boxed()
 }
