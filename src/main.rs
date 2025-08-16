@@ -8,17 +8,16 @@ use crate::adapter::RequestAdapter;
 use crate::handler::Handler;
 use crate::types::DefaultHeaderSelector;
 use ::hyper::body::Bytes;
-use ::hyper::server::conn::http2;
 use ::hyper::service::service_fn;
 use clap::Parser;
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty};
 use hyper::body::Incoming;
+use hyper::server::conn::http1;
 use hyper::{Request, Response, StatusCode, Uri};
-use hyper_rustls::HttpsConnector;
+use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::Client;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use rcgen::generate_simple_self_signed;
 use std::convert::Infallible;
@@ -32,7 +31,9 @@ use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
-use tokio_rustls::rustls::{DigitallySignedStruct, Error, ServerConfig, SignatureScheme};
+use tokio_rustls::rustls::{
+    ClientConfig, DigitallySignedStruct, Error, ServerConfig, SignatureScheme,
+};
 use tokio_rustls::{TlsAcceptor, rustls};
 
 #[derive(Parser, Debug)]
@@ -80,7 +81,7 @@ async fn main() {
             PrivateKeyDer::Pkcs8(cert.signing_key.serialized_der().into()),
         )
         .expect("Failed to create certificate.");
-    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+    server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, args.port.unwrap_or(443u16)))
         .await
@@ -102,7 +103,6 @@ async fn main() {
         .as_ref()
         .map(|it| Arc::new(Uri::from_str(it).expect("invalid forwarded origin")));
     let client = if args.forwarded_origin.is_some() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         #[derive(Debug)]
         struct AcceptAllVerifier {
             server_name: String,
@@ -150,7 +150,7 @@ async fn main() {
                 ]
             }
         }
-        let config = rustls::ClientConfig::builder()
+        let config = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier {
                 server_name: forwarded_uri
@@ -163,11 +163,10 @@ async fn main() {
             .with_no_client_auth();
         let client: Client<_, BoxBody<Bytes, hyper::Error>> = Client::builder(TokioExecutor::new())
             .build(
-                HttpsConnector::<HttpConnector>::builder()
+                HttpsConnectorBuilder::new()
                     .with_tls_config(config)
                     .https_only()
-                    .enable_http1()
-                    .enable_http2()
+                    .enable_all_versions()
                     .build(),
             );
         Some(Arc::new(client))
@@ -184,7 +183,7 @@ async fn main() {
                     let io = TokioIo::new(tls_stream);
                     let client = client.clone();
                     let forwarded_uri = forwarded_uri.clone();
-                    let _ = http2::Builder::new(TokioExecutor::new())
+                    let _ = http1::Builder::new()
                         .serve_connection(
                             io,
                             service_fn({
@@ -202,74 +201,91 @@ async fn main() {
                                         let (parts, body) = request.into_parts();
                                         let request =
                                             Request::from_parts(parts.clone(), empty_body());
+                                        let request_message = format!(
+                                            "{} {}",
+                                            method_string(request.method().as_str().as_bytes()),
+                                            request
+                                                .uri()
+                                                .path_and_query()
+                                                .map(|it| it.as_str())
+                                                .unwrap_or("/")
+                                        );
                                         let response =
                                             handler.handle(RequestAdapter { inner: request }).await;
-                                        Ok::<Response<BoxBody<Bytes, hyper::Error>>, Infallible>(
-                                            match response.status() {
-                                                StatusCode::NOT_FOUND
-                                                | StatusCode::METHOD_NOT_ALLOWED => {
-                                                    let body = body.boxed();
-                                                    if let Some(client) = client.as_ref() {
-                                                        let mut request = Request::from_parts(
-                                                            parts.clone(),
-                                                            body,
-                                                        );
-                                                        let uri = request.uri();
-                                                        let forward_uri = Uri::builder();
-                                                        let forwarded_uri = forwarded_uri.unwrap();
-                                                        let forward_uri = if let Some(scheme) =
-                                                            forwarded_uri
-                                                                .scheme()
-                                                                .or_else(|| uri.scheme())
-                                                        {
-                                                            forward_uri.scheme(scheme.clone())
-                                                        } else {
-                                                            forward_uri
-                                                        };
-                                                        let forward_uri = if let Some(authority) =
-                                                            forwarded_uri
-                                                                .authority()
-                                                                .or_else(|| uri.authority())
-                                                        {
-                                                            forward_uri.authority(authority.clone())
-                                                        } else {
-                                                            forward_uri
-                                                        };
-                                                        let forward_uri =
-                                                            if let Some(path_and_query) =
-                                                                uri.path_and_query()
-                                                            {
-                                                                forward_uri.path_and_query(
-                                                                    path_and_query.clone(),
-                                                                )
-                                                            } else {
-                                                                forward_uri
-                                                            };
-                                                        *request.uri_mut() =
-                                                            forward_uri.build().expect(
-                                                                "could not build forwarded uri",
-                                                            );
-                                                        let forward_response =
-                                                            client.request(request).await;
-                                                        if let Ok(forward_response) =
-                                                            forward_response
-                                                        {
-                                                            let (parts, body) =
-                                                                forward_response.into_parts();
+                                        let (response, forwarded) = if response
+                                            .status()
+                                            .is_client_error()
+                                        {
+                                            let body = body.boxed();
+                                            if let Some(client) = client.as_ref() {
+                                                let mut request = Request::from_parts(parts, body);
+                                                let uri = request.uri();
+                                                let forward_uri = Uri::builder();
+                                                let forwarded_uri = forwarded_uri.unwrap();
+                                                let forward_uri = if let Some(scheme) =
+                                                    forwarded_uri.scheme().or_else(|| uri.scheme())
+                                                {
+                                                    forward_uri.scheme(scheme.clone())
+                                                } else {
+                                                    forward_uri
+                                                };
+                                                let forward_uri = if let Some(authority) =
+                                                    forwarded_uri
+                                                        .authority()
+                                                        .or_else(|| uri.authority())
+                                                {
+                                                    forward_uri.authority(authority.clone())
+                                                } else {
+                                                    forward_uri
+                                                };
+                                                let forward_uri = if let Some(path_and_query) =
+                                                    uri.path_and_query()
+                                                {
+                                                    forward_uri
+                                                        .path_and_query(path_and_query.clone())
+                                                } else {
+                                                    forward_uri
+                                                };
+                                                let forward_uri = forward_uri
+                                                    .build()
+                                                    .expect("could not build forwarded uri");
+                                                *request.uri_mut() = forward_uri;
+                                                let forward_response =
+                                                    client.request(request).await;
+                                                match forward_response {
+                                                    Ok(forward_response) => {
+                                                        let (parts, body) =
+                                                            forward_response.into_parts();
+                                                        (
                                                             Response::from_parts(
                                                                 parts,
                                                                 body.boxed(),
-                                                            )
-                                                        } else {
-                                                            response
-                                                        }
-                                                    } else {
-                                                        let _ = body.collect().await;
-                                                        response
+                                                            ),
+                                                            true,
+                                                        )
+                                                    }
+                                                    Err(err) => {
+                                                        println!(
+                                                            "{}\n{err:?}",
+                                                            "error on forwarded response".red()
+                                                        );
+                                                        (response, false)
                                                     }
                                                 }
-                                                _ => response,
-                                            },
+                                            } else {
+                                                let _ = body.collect().await;
+                                                (response, false)
+                                            }
+                                        } else {
+                                            (response, false)
+                                        };
+                                        println!(
+                                            "{} {} {request_message}",
+                                            if forwarded { ">>" } else { "  " },
+                                            status_string(&response.status()),
+                                        );
+                                        Ok::<Response<BoxBody<Bytes, hyper::Error>>, Infallible>(
+                                            response,
                                         )
                                     }
                                 }
@@ -286,4 +302,29 @@ fn empty_body() -> BoxBody<Bytes, hyper::Error> {
     Empty::<Bytes>::new()
         .map_err(|err: Infallible| match err {})
         .boxed()
+}
+
+fn method_string(method: &[u8]) -> ColoredString {
+    match method {
+        b"HEAD" => "HEAD".yellow(),
+        b"GET" => "GET".dimmed(),
+        b"OPTIONS" => "OPTIONS".cyan(),
+        _ => method.escape_ascii().to_string().red(),
+    }
+}
+
+fn status_string(status: &StatusCode) -> ColoredString {
+    if status.is_success() {
+        status.as_u16().to_string().green()
+    } else if status.is_redirection() {
+        if status == &StatusCode::NOT_MODIFIED {
+            status.as_u16().to_string().purple()
+        } else {
+            status.as_u16().to_string().blue()
+        }
+    } else if status.is_client_error() || status.is_server_error() {
+        status.as_u16().to_string().red()
+    } else {
+        status.as_u16().to_string().normal()
+    }
 }

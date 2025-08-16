@@ -20,12 +20,12 @@ features = ["std"]
 [dependencies.hyper]
 version = "1.6"
 default-features = false
-features = ["http1", "http2"]
+features = ["http1"]
 
 [dependencies.hyper-util]
 version = "0.1"
 default-features = false
-features = ["tokio", "server", "http1", "http2"]
+features = ["tokio", "server", "client", "http1", "http2"]
 
 [dependencies.http-body-util]
 version = "0.1"
@@ -55,3 +55,4 @@ features = ["ring"]
 [profile.release]
 lto = "fat"
 codegen-units = 1
+

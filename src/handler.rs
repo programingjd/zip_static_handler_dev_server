@@ -1,11 +1,10 @@
 use crate::http::headers::{
-    Line, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, IF_MATCH, IF_NONE_MATCH, LOCATION,
+    CONTENT_ENCODING, CONTENT_LENGTH, ETAG, IF_MATCH, IF_NONE_MATCH, LOCATION, Line,
 };
 use crate::http::method;
 use crate::http::request::Request;
 use crate::http::response::StatusCode;
 use crate::path::{extension, filename};
-use colored::{ColoredString, Colorize};
 use crc32fast::hash;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -19,21 +18,19 @@ impl<T: HeaderSelector> Handler<T> {
     pub async fn handle<Resp, Req: Request<Resp>>(&self, request: Req) -> Resp {
         let method = request.method();
         let path = String::from_utf8_lossy(request.path());
-        if let Some(value) = request.first_header_value(CONTENT_LENGTH) {
-            println!("{} {} {}", "400".red(), method_string(method), path);
-            if value != b"0" {
-                return request.response(
-                    StatusCode::BadRequest,
-                    self.header_selector.error_headers().iter(),
-                    None::<&[u8]>,
-                );
-            }
+        if let Some(value) = request.first_header_value(CONTENT_LENGTH)
+            && value != b"0"
+        {
+            return request.response(
+                StatusCode::BadRequest,
+                self.header_selector.error_headers().iter(),
+                None::<&[u8]>,
+            );
         }
         let is_get = match method {
             method::GET => true,
             method::HEAD => false,
             _ => {
-                println!("{} {} {}", "405".red(), method_string(method), path);
                 return request.response(
                     StatusCode::MethodNotAllowed,
                     self.header_selector.error_headers().iter(),
@@ -51,10 +48,8 @@ impl<T: HeaderSelector> Handler<T> {
                 {
                     let location = format!("/{}{path_without_trailing_slash}", self.prefix);
                     headers.push(Line::with_owned_value(LOCATION, location.into_bytes()));
-                    println!("{} {} {}", "308".blue(), method_string(method), path);
                     return request.response(StatusCode::PermanentRedirect, headers.iter(), None);
                 } else {
-                    println!("{} {} {}", "404".red(), method_string(method), path);
                     return request.response(
                         StatusCode::NotFound,
                         self.header_selector.error_headers().iter(),
@@ -63,7 +58,6 @@ impl<T: HeaderSelector> Handler<T> {
                 }
             }
             if path.starts_with('.') || path.contains("/.") {
-                println!("{} {} /{}", "404".red(), method_string(method), path);
                 return request.response(
                     StatusCode::NotFound,
                     self.header_selector.error_headers().iter(),
@@ -162,14 +156,12 @@ impl<T: HeaderSelector> Handler<T> {
                             let none_match = request.first_header_value(IF_NONE_MATCH);
                             let if_match = request.first_header_value(IF_MATCH);
                             if none_match.is_some() && none_match == etag {
-                                println!("{} {} /{}", "304".purple(), method_string(method), path);
                                 return request.response(
                                     StatusCode::NotModified,
                                     headers.iter(),
                                     None::<&[u8]>,
                                 );
                             } else if if_match.is_some() && if_match != etag {
-                                println!("{} {} /{}", "412".red(), method_string(method), path);
                                 return request.response(
                                     StatusCode::PreconditionFailed,
                                     headers.iter(),
@@ -179,14 +171,12 @@ impl<T: HeaderSelector> Handler<T> {
                         }
                         return if redirection {
                             if etag.is_some() {
-                                println!("{} {} /{}", "307".blue(), method_string(method), path);
                                 request.response(
                                     StatusCode::TemporaryRedirect,
                                     headers.iter(),
                                     None,
                                 )
                             } else {
-                                println!("{} {} /{}", "308".blue(), method_string(method), path);
                                 request.response(
                                     StatusCode::PermanentRedirect,
                                     headers.iter(),
@@ -194,7 +184,6 @@ impl<T: HeaderSelector> Handler<T> {
                                 )
                             }
                         } else {
-                            println!("{} {} /{}", "200".green(), method_string(method), path);
                             request.response(
                                 StatusCode::OK,
                                 headers.iter(),
@@ -209,21 +198,11 @@ impl<T: HeaderSelector> Handler<T> {
                 }
             }
         }
-        println!("{} {} {}", "404".red(), method_string(method), path);
         request.response(
             StatusCode::NotFound,
             self.header_selector.error_headers().iter(),
             None::<&[u8]>,
         )
-    }
-}
-
-fn method_string(method: &[u8]) -> ColoredString {
-    match method {
-        b"HEAD" => "HEAD".yellow(),
-        b"GET" => "GET".dimmed(),
-        b"OPTIONS" => "OPTIONS".cyan(),
-        _ => method.escape_ascii().to_string().red(),
     }
 }
 
