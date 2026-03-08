@@ -1,6 +1,6 @@
 [package]
 name = "serve"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 license = "MIT"
 
@@ -18,7 +18,7 @@ default-features = false
 features = ["std"]
 
 [dependencies.hyper]
-version = "1.6"
+version = "1.8"
 default-features = false
 features = ["http1"]
 
@@ -43,7 +43,7 @@ default-features = false
 features = ["crypto", "ring", "pem"]
 
 [dependencies.tokio]
-version = "1.47"
+version = "1.0"
 default-features = false
 features = ["full", "io-util"]
 
