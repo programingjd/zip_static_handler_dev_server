@@ -1,15 +1,15 @@
 [package]
 name = "serve"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 license = "MIT"
 
 [dependencies.clap]
-version = "4.5"
+version = "4.6"
 features = ["derive"]
 
 [dependencies.colored]
-version = "3.0"
+version = "3.1"
 features = []
 
 [dependencies.crc32fast]
@@ -18,7 +18,7 @@ default-features = false
 features = ["std"]
 
 [dependencies.hyper]
-version = "1.8"
+version = "1.9"
 default-features = false
 features = ["http1"]
 
@@ -43,7 +43,7 @@ default-features = false
 features = ["crypto", "ring", "pem"]
 
 [dependencies.tokio]
-version = "1.0"
+version = "1.51"
 default-features = false
 features = ["full", "io-util"]
 
