@@ -1,6 +1,6 @@
 [package]
 name = "serve"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2024"
 license = "MIT"
 
@@ -43,7 +43,7 @@ default-features = false
 features = ["crypto", "ring", "pem"]
 
 [dependencies.tokio]
-version = "1.51"
+version = "1.52"
 default-features = false
 features = ["full", "io-util"]
 
